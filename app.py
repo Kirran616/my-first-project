@@ -1,6 +1,7 @@
-"""Reel: portfolio chatbot backend (Flask + OpenRouter).
+"""Reel: portfolio chatbot backend (Flask + OpenRouter), Render-ready.
 
-Run:  python app.py   then open http://127.0.0.1:5000
+Local:   python app.py   then open http://127.0.0.1:5000
+Render:  gunicorn app:app  (see render.yaml)
 """
 
 import json
@@ -10,6 +11,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from flask_cors import CORS
 
 from knowledge import BOT_NAME, PORTFOLIO_URL, SYSTEM_PROMPT
 
@@ -20,15 +22,33 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini").strip()
 
+# Comma-separated list of sites allowed to call this API from a browser.
+# Example: https://kirransuleman-portfolio.netlify.app
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "ALLOWED_ORIGINS",
+        "https://kirransuleman-portfolio.netlify.app,http://127.0.0.1:5000,http://localhost:5000",
+    ).split(",")
+    if o.strip()
+]
+
 MAX_HISTORY = 12  # most recent messages sent to the model
 MAX_CHARS = 2000  # per message
 
 app = Flask(__name__, static_folder=str(BASE_DIR / "static"), static_url_path="/static")
+CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
 
 
 @app.get("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.get("/health")
+def health():
+    """Used by Render's health check."""
+    return jsonify(status="ok")
 
 
 @app.get("/api/info")
@@ -51,9 +71,9 @@ def clean_history(raw):
 
 
 ERROR_HINTS = {
-    401: "The OpenRouter API key was rejected. Check OPENROUTER_API_KEY in your .env file.",
+    401: "The OpenRouter API key was rejected. Check OPENROUTER_API_KEY in your Render environment variables.",
     402: "Your OpenRouter account is out of credits. Add credits or switch to a free model.",
-    404: "That model was not found. Check OPENROUTER_MODEL in your .env file.",
+    404: "That model was not found. Check OPENROUTER_MODEL in your Render environment variables.",
     429: "OpenRouter is rate limiting requests. Wait a moment and try again.",
 }
 
@@ -61,7 +81,7 @@ ERROR_HINTS = {
 @app.post("/api/chat")
 def chat():
     if not API_KEY:
-        return jsonify(error="No API key found. Add OPENROUTER_API_KEY to your .env file and restart."), 500
+        return jsonify(error="No API key found. Add OPENROUTER_API_KEY in Render environment variables and redeploy."), 500
 
     payload = request.get_json(silent=True) or {}
     history = clean_history(payload.get("messages"))
@@ -85,7 +105,7 @@ def chat():
     try:
         upstream = requests.post(OPENROUTER_URL, headers=headers, json=body, stream=True, timeout=60)
     except requests.RequestException:
-        return jsonify(error="Could not reach OpenRouter. Check your internet connection."), 502
+        return jsonify(error="Could not reach OpenRouter. Please try again."), 502
 
     if upstream.status_code != 200:
         message = ERROR_HINTS.get(upstream.status_code)
@@ -132,6 +152,8 @@ def chat():
 
 
 if __name__ == "__main__":
+    # Local development only. On Render, gunicorn runs the app instead.
     if not API_KEY:
         print("Warning: OPENROUTER_API_KEY is not set. Copy .env.example to .env and add your key.")
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host="127.0.0.1", port=port, debug=os.getenv("FLASK_DEBUG", "1") == "1")
