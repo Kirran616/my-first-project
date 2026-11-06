@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: reel-portfolio-chatbot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # gthread workers keep streaming responses working; long timeout for slow model replies
+    startCommand: gunicorn app:app --worker-class gthread --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: OPENROUTER_API_KEY
+        sync: false   # enter this in the Render dashboard, never in git
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4o-mini
+      - key: ALLOWED_ORIGINS
+        value: https://kirransuleman-portfolio.netlify.app
